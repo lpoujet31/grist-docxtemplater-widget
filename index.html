@@ -45,9 +45,9 @@
     /* ---------------------------------------------------------------- *
      * 2.  PRÉ-CHARGEMENTS                                              *
      * ---------------------------------------------------------------- */
-    const templateBuf = await fetch(TEMPLATE_URL).then(r => r.arrayBuffer());
-    const {records: sessRows} = await grist.docApi.fetchTable(TABLE_SESSIONS);
-    const {records: modRows } = await grist.docApi.fetchTable(TABLE_MODULES);
+    const {records: sessRows = []} = await grist.docApi.fetchTable(TABLE_SESSIONS) ?? {};
+    const {records: modRows  = []} = await grist.docApi.fetchTable(TABLE_MODULES)  ?? {};
+
 
     // id → libellé
     const modLabel = Object.fromEntries(
