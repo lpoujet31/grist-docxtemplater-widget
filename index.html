@@ -2,92 +2,95 @@
 <html lang="fr">
 <head>
   <meta charset="utf-8">
-  <title>Génération DOCX Grist</title>
+  <title>Publipostage DOCX</title>
+
+  <!-- 1. API Grist : placée AVANT tout code qui l’utilise -->
+  <script src="https://docs.getgrist.com/grist-static/grist-plugin-api.js"></script>
+
+  <!-- 2. Librairies externes -->
   <script src="https://unpkg.com/pizzip@3/dist/pizzip.min.js"></script>
   <script src="https://unpkg.com/docxtemplater@3.39.0/build/docxtemplater.js"></script>
   <script src="https://unpkg.com/file-saver@2.0.5/dist/FileSaver.min.js"></script>
-  <script src="https://docs.getgrist.com/grist-static/grist-plugin-api.js"></script>
-  <style>
-    body{font-family:system-ui, sans-serif;padding:1rem}
-    button{padding:.6rem 1.2rem;border:none;border-radius:6px;cursor:pointer;background:#2563eb;color:#fff}
-  </style>
 </head>
 <body>
   <h2>Publipostage DOCX</h2>
-  <p>Sélectionne une ligne de la table <strong>SESSIONS</strong> puis clique :</p>
   <button id="btn">Télécharger le DOCX</button>
 
-<script>
-const TEMPLATE_URL = 'modele_module.docx';   // même dossier que cet index.html
-let templateArrayBuffer = null;
+  <!-- 3. Ton script : exécuté quand l’API est déjà là -->
+  <script>
+    // ✅  l’objet existe déjà
+    const grist = window.grist;
+    grist.ready();                        // plus d’erreur
+    const TEMPLATE_URL = 'modele_module.docx';   // même dossier que cet index.html
+    let templateArrayBuffer = null;
 
-// Pré-charge le modèle une seule fois
-fetch(TEMPLATE_URL)
-  .then(res => res.arrayBuffer())
-  .then(buf => { templateArrayBuffer = buf; })
-  .catch(err => alert('Impossible de charger le modèle : ' + err));
+    // Pré-charge le modèle une seule fois
+    fetch(TEMPLATE_URL)
+      .then(res => res.arrayBuffer())
+      .then(buf => { templateArrayBuffer = buf; })
+      .catch(err => alert('Impossible de charger le modèle : ' + err));
 
-const grist = window.grist || {};
-grist.ready();                    // signale à Grist que le widget est prêt
+    const grist = window.grist || {};
+    grist.ready();                    // signale à Grist que le widget est prêt
 
-// Récupère toutes les lignes de la table SESSIONS (une seule fois)
-async function getAllSessions() {
-  const {records} = await grist.docApi.fetchTable('SESSIONS');
-  return records;
-}
+    // Récupère toutes les lignes de la table SESSIONS (une seule fois)
+    async function getAllSessions() {
+      const {records} = await grist.docApi.fetchTable('SESSIONS');
+      return records;
+    }
 
-// Au clic : construit l’objet data, fusionne et télécharge
-document.getElementById('btn').addEventListener('click', async () => {
-  const sel = await grist.selectionGet();
-  if (!sel?.tableId || sel.tableId !== 'SESSIONS') {
-    return alert('Sélectionne d\'abord une ligne dans la table SESSIONS.');
-  }
-  const [rowId] = sel?.rowIds ?? [];
-  const rows = await getAllSessions();
-  const current = rows.find(r => r.id === rowId);
-  // ... juste après avoir construit `current`
-  console.log('DEBUG – current.RefModule =', current.RefModule);
-  if (!current) return alert('Ligne introuvable.');
+    // Au clic : construit l’objet data, fusionne et télécharge
+    document.getElementById('btn').addEventListener('click', async () => {
+      const sel = await grist.selectionGet();
+      if (!sel?.tableId || sel.tableId !== 'SESSIONS') {
+        return alert('Sélectionne d\'abord une ligne dans la table SESSIONS.');
+      }
+      const [rowId] = sel?.rowIds ?? [];
+      const rows = await getAllSessions();
+      const current = rows.find(r => r.id === rowId);
+      // ... juste après avoir construit `current`
+      console.log('DEBUG – current.RefModule =', current.RefModule);
+      if (!current) return alert('Ligne introuvable.');
 
-  // Regroupe toutes les sessions du même module
-  const moduleId = current.RefModule_id_module_pilote;
-  const sameModuleSessions = rows.filter(r => r.RefModule_id_module_pilote === moduleId);
+      // Regroupe toutes les sessions du même module
+      const moduleId = current.RefModule_id_module_pilote;
+      const sameModuleSessions = rows.filter(r => r.RefModule_id_module_pilote === moduleId);
 
-  // Construit l’objet data pour Docxtemplater
-  const data = {
-    ID_MODULE: moduleId,
-    CODE_MODULE: current.RefModule,
-    LIBELLE_MODULE: current['RefModule_libelle dispositif'],
-    AXE_SDFC: current['RefModule_axe sdfc'],
-    OBJECTIF_DISPOSITIF: current['RefModule_objectif dispositif'],
-    OBJECTIF_MODULE: current['RefModule_objectif module / description contenu'],
-    sessions: sameModuleSessions.map(s => ({
-      IndexSession:        s['index session'],
-      Periode:             s.periode,
-      Modalite:            s.modalite,
-      ObjectifSession:     s['objectif session'],
-      Formateurs:          s.formateurs,
-      NbGroupes:           s['nombre de groupes'],
-      Effectif:            s['effectif groupe'],
-      Duree:               s.duree,
-      VolumeHoraire:       s['volume horaire']
-    }))
-  };
+      // Construit l’objet data pour Docxtemplater
+      const data = {
+        ID_MODULE: moduleId,
+        CODE_MODULE: current.RefModule,
+        LIBELLE_MODULE: current['RefModule_libelle dispositif'],
+        AXE_SDFC: current['RefModule_axe sdfc'],
+        OBJECTIF_DISPOSITIF: current['RefModule_objectif dispositif'],
+        OBJECTIF_MODULE: current['RefModule_objectif module / description contenu'],
+        sessions: sameModuleSessions.map(s => ({
+          IndexSession:        s['index session'],
+          Periode:             s.periode,
+          Modalite:            s.modalite,
+          ObjectifSession:     s['objectif session'],
+          Formateurs:          s.formateurs,
+          NbGroupes:           s['nombre de groupes'],
+          Effectif:            s['effectif groupe'],
+          Duree:               s.duree,
+          VolumeHoraire:       s['volume horaire']
+        }))
+      };
 
-  // Fusion
-  const zip = new PizZip(templateArrayBuffer);
-  const doc = new window.docxtemplater(zip, {paragraphLoop:true, linebreaks:true});
-  doc.setData(data);
-  try {
-    doc.render();
-  } catch(err) {
-    console.error(err);
-    return alert('Erreur pendant le publipostage : ' + err.message);
-  }
-  // Téléchargement
-  const out = doc.getZip().generate({type:'blob', mimeType:'application/vnd.openxmlformats-officedocument.wordprocessingml.document'});
-  saveAs(out, `Module_${data.CODE_MODULE || moduleId}.docx`);
-});
-</script>
+      // Fusion
+      const zip = new PizZip(templateArrayBuffer);
+      const doc = new window.docxtemplater(zip, {paragraphLoop:true, linebreaks:true});
+      doc.setData(data);
+      try {
+        doc.render();
+      } catch(err) {
+        console.error(err);
+        return alert('Erreur pendant le publipostage : ' + err.message);
+      }
+      // Téléchargement
+      const out = doc.getZip().generate({type:'blob', mimeType:'application/vnd.openxmlformats-officedocument.wordprocessingml.document'});
+      saveAs(out, `Module_${data.CODE_MODULE || moduleId}.docx`);
+    });
+  </script>
 </body>
 </html>
