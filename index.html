@@ -1,138 +1,128 @@
+<!-- index.html -->
 <!doctype html>
 <html lang="fr">
 <head>
   <meta charset="utf-8">
   <title>Publipostage DOCX – Grist</title>
 
-  <!-- ① API Grist : absolument en premier, sans async/defer -->
+  <!-- 1️⃣  API Grist -->
   <script src="https://docs.getgrist.com/grist-plugin-api.js"></script>
 
-  <!-- ② Librairies tierces -->
+  <!-- 2️⃣  Librairies -->
   <script src="https://unpkg.com/pizzip@3/dist/pizzip.min.js"></script>
   <script src="https://unpkg.com/docxtemplater@3.39.0/build/docxtemplater.js"></script>
   <script src="https://unpkg.com/file-saver@2.0.5/dist/FileSaver.min.js"></script>
 
-  <style>
-    body{font-family:system-ui,sans-serif;padding:1rem}
-    button{padding:.6rem 1.4rem;background:#2563eb;color:#fff;
-           border:0;border-radius:6px;cursor:pointer}
-    button:disabled{opacity:.5;cursor:not-allowed}
-  </style>
+  <!-- 3️⃣  (facultatif) ton CSS -->
+  <link rel="stylesheet" href="index.css?v=4">
 </head>
 <body>
   <h2>Publipostage DOCX</h2>
-  <p>Sélectionne une ligne dans <strong>SESSIONS</strong>, puis clique&nbsp;:</p>
+  <p>Sélectionne une ligne dans <strong>SESSIONS</strong>, puis clique :</p>
   <button id="btn" disabled>Télécharger le DOCX</button>
 
-<script>
-/* ------------------------------------------------------------------ *
- * 0. CONFIG                                                          *
- * ------------------------------------------------------------------ */
-const TEMPLATE_URL = 'modele_module.docx?v=1';      // incrémente v=2, v=3… à chaque commit
-const TABLE_SESSIONS = 'SESSIONS';
-const TABLE_MODULES  = 'MODULES';
+  <!-- 4️⃣  Script principal – entièrement encapsulé -->
+  <script>
+  (async () => {
 
-/* ------------------------------------------------------------------ *
- * 1. API GRIST                                                       *
- * ------------------------------------------------------------------ */
-const grist = window.grist;
-if (!grist) {
-  console.error('⚠️  API Grist absente – vérifie l’URL ou l’ordre des <script>.');
-  // Ne rien faire de plus : le widget est forcément hors de Grist.
-} else {
-  main();         // lance le widget
-}
+    /* ---------------------------------------------------------------- *
+     * 0.  CONFIG                                                       *
+     * ---------------------------------------------------------------- */
+    const TEMPLATE_URL   = 'modele_module.docx?v=4';  // incrémente à chaque commit
+    const TABLE_SESSIONS = 'SESSIONS';
+    const TABLE_MODULES  = 'MODULES';
 
-/* ------------------------------------------------------------------ *
- * 2. FONCTION PRINCIPALE                                             *
- * ------------------------------------------------------------------ */
-async function main() {
-  grist.ready();                                        // signal « prêt »
-
-  /* 2.1 Charger le modèle DOCX */
-  let templateBuf;
-  try {
-    templateBuf = await fetch(TEMPLATE_URL).then(r => r.arrayBuffer());
-  } catch (e) {
-    alert('Impossible de charger le modèle DOCX : ' + e);
-    return;
-  }
-
-  /* 2.2 Charger les tables */
-  const {records: sessRows} = await grist.docApi.fetchTable(TABLE_SESSIONS);
-  const {records: modRows } = await grist.docApi.fetchTable(TABLE_MODULES);
-
-  /* 2.3 Dictionnaire id → libellé module */
-  const modLabel = Object.fromEntries(
-    modRows.map(r => [r.id, sanitize(r.RefModule)])
-  );
-
-  /* 2.4 Grouper les sessions par module_pilote */
-  const sessionsByModule = {};
-  for (const s of sessRows) {
-    const k = s.RefModule_id_module_pilote;
-    (sessionsByModule[k] ??= []).push(s);
-  }
-
-  /* 2.5 Suivi de la sélection */
-  let current = null;
-  grist.onRecord(rec => {
-    current = rec;                 // null quand aucune ligne n’est sélectionnée
-    document.getElementById('btn').disabled = !rec;
-  });
-
-  /* 2.6 Clic → fusion + téléchargement */
-  document.getElementById('btn').addEventListener('click', () => {
-    if (!current) return;
-
-    const mid      = current.RefModule_id_module_pilote;
-    const sessions = sessionsByModule[mid] || [];
-
-    const data = {
-      ID_MODULE: mid,
-      CODE_MODULE: modLabel[current.RefModule] || current.RefModule,
-      LIBELLE_MODULE: sanitize(current['RefModule_libelle dispositif']),
-      AXE_SDFC:       sanitize(current['RefModule_axe sdfc']),
-      OBJECTIF_DISPOSITIF: sanitize(current['RefModule_objectif dispositif']),
-      OBJECTIF_MODULE:     sanitize(current['RefModule_objectif module / description contenu']),
-      sessions: sessions.map(s => ({
-        IndexSession:   sanitize(s['index session']),
-        Periode:        sanitize(s.periode),
-        Modalite:       sanitize(s.modalite),
-        ObjectifSession:sanitize(s['objectif session']),
-        Formateurs:     sanitize(s.formateurs),
-        NbGroupes:      sanitize(s['nombre de groupes']),
-        Effectif:       sanitize(s['effectif groupe']),
-        Duree:         sanitize(s.duree),
-        VolumeHoraire: sanitize(s['volume horaire'])
-      }))
-    };
-
-    try {
-      const zip = new PizZip(templateBuf);
-      const doc = new window.Docxtemplater(zip, {paragraphLoop:true, linebreaks:true});
-      doc.setData(data);
-      doc.render();
-      const blob = doc.getZip().generate({
-        type:'blob',
-        mimeType:'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
-      });
-      const filename = `Module_${data.CODE_MODULE || data.ID_MODULE}.docx`;
-      saveAs(blob, filename);
-    } catch (e) {
-      console.error(e); alert('Erreur pendant la génération : ' + e.message);
+    /* ---------------------------------------------------------------- *
+     * 1.  ACCÈS À L’API GRIST                                          *
+     * ---------------------------------------------------------------- */
+    const grist = window.grist;
+    if (!grist) {
+      console.error('API Grist absente – le widget n’est pas lancé dans Grist.');
+      return;
     }
-  });
-}
+    grist.ready();
 
-/* ------------------------------------------------------------------ *
- * 3. UTIL                                                            *
- * ------------------------------------------------------------------ */
-function sanitize(v) {
-  if (Array.isArray(v) && v[0]?.attachmentId) return v.map(a => a.name).join(', ');
-  if (v && typeof v === 'object') return JSON.stringify(v);
-  return v ?? '';
-}
-</script>
+    /* ---------------------------------------------------------------- *
+     * 2.  PRÉ-CHARGEMENTS                                              *
+     * ---------------------------------------------------------------- */
+    const templateBuf = await fetch(TEMPLATE_URL).then(r => r.arrayBuffer());
+    const {records: sessRows} = await grist.docApi.fetchTable(TABLE_SESSIONS);
+    const {records: modRows } = await grist.docApi.fetchTable(TABLE_MODULES);
+
+    // id → libellé
+    const modLabel = Object.fromEntries(
+      modRows.map(r => [r.id, sanitize(r.RefModule)])
+    );
+
+    // sessions regroupées par module pilote
+    const sessionsByModule = {};
+    for (const s of sessRows) {
+      (sessionsByModule[s.RefModule_id_module_pilote] ??= []).push(s);
+    }
+
+    /* ---------------------------------------------------------------- *
+     * 3.  SUIVI DE LA SÉLECTION                                        *
+     * ---------------------------------------------------------------- */
+    let current = null;
+    grist.onRecord(r => {
+      current = r;
+      btn.disabled = !r;
+    });
+
+    /* ---------------------------------------------------------------- *
+     * 4.  GÉNÉRATION DOCX                                              *
+     * ---------------------------------------------------------------- */
+    const btn = document.getElementById('btn');
+    btn.addEventListener('click', () => {
+      if (!current) return;
+
+      const mid = current.RefModule_id_module_pilote;
+      const data = {
+        ID_MODULE: mid,
+        CODE_MODULE: modLabel[current.RefModule] || current.RefModule,
+        LIBELLE_MODULE: sanitize(current['RefModule_libelle dispositif']),
+        AXE_SDFC:       sanitize(current['RefModule_axe sdfc']),
+        OBJECTIF_DISPOSITIF: sanitize(current['RefModule_objectif dispositif']),
+        OBJECTIF_MODULE:     sanitize(current['RefModule_objectif module / description contenu']),
+        sessions: (sessionsByModule[mid] || []).map(s => ({
+          IndexSession:   sanitize(s['index session']),
+          Periode:        sanitize(s.periode),
+          Modalite:       sanitize(s.modalite),
+          ObjectifSession:sanitize(s['objectif session']),
+          Formateurs:     sanitize(s.formateurs),
+          NbGroupes:      sanitize(s['nombre de groupes']),
+          Effectif:       sanitize(s['effectif groupe']),
+          Duree:          sanitize(s.duree),
+          VolumeHoraire:  sanitize(s['volume horaire'])
+        }))
+      };
+
+      try {
+        const zip = new PizZip(templateBuf);
+        const doc = new window.Docxtemplater(zip, {paragraphLoop:true,linebreaks:true});
+        doc.setData(data);
+        doc.render();
+        const blob = doc.getZip().generate({
+          type:'blob',
+          mimeType:'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+        });
+        saveAs(blob, `Module_${data.CODE_MODULE || data.ID_MODULE}.docx`);
+      } catch (e) {
+        console.error(e);
+        alert('Erreur : ' + e.message);
+      }
+    });
+
+    /* ---------------------------------------------------------------- *
+     * 5.  UTIL                                                         *
+     * ---------------------------------------------------------------- */
+    function sanitize(v) {
+      if (Array.isArray(v) && v[0]?.attachmentId) return v.map(a => a.name).join(', ');
+      if (v && typeof v === 'object') return JSON.stringify(v);
+      return v ?? '';
+    }
+
+  })();   // ← IIFE : aucune variable globale
+  </script>
 </body>
 </html>
