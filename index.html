@@ -1,23 +1,144 @@
 <!doctype html>
-<html>
+<html lang="fr">
 <head>
   <meta charset="utf-8">
+  <title>Publipostage DOCX – Grist</title>
+
+  <!-- 1️⃣  API Grist : doit arriver AVANT toute référence à window.grist -->
   <script src="https://docs.getgrist.com/grist-static/grist-plugin-api.js"></script>
+
+  <!-- 2️⃣  Librairies tierces -->
   <script src="https://unpkg.com/pizzip@3/dist/pizzip.min.js"></script>
   <script src="https://unpkg.com/docxtemplater@3.39.0/build/docxtemplater.js"></script>
   <script src="https://unpkg.com/file-saver@2.0.5/dist/FileSaver.min.js"></script>
+
+  <!-- 3️⃣  Petite feuille de style (facultatif) -->
+  <style>
+    body {font-family:system-ui, sans-serif; padding:1rem}
+    button {padding:.6rem 1.4rem; background:#2563eb; color:#fff;
+            border:0; border-radius:6px; cursor:pointer}
+    button:disabled {opacity:.5; cursor:not-allowed}
+  </style>
 </head>
 <body>
-  <button id="btn">Télécharger le DOCX</button>
+  <h2>Publipostage DOCX</h2>
+  <p>Sélectionne une ligne dans la table <strong>SESSIONS</strong>, puis clique&nbsp;:</p>
+  <button id="btn" disabled>Télécharger le DOCX</button>
 
-  <script>
-    const grist = window.grist;   // ✅ l’API existe
-    grist.ready();
+<script>
+document.addEventListener('DOMContentLoaded', async () => {
 
-    grist.onRecord(rec => console.log('Sélection :', rec));
+  /* ------------------------------------------------------------------ *
+   * 0.  CONFIGURATION                                                  *
+   * ------------------------------------------------------------------ */
+  const TEMPLATE_URL = 'modele_module.docx?v=1';     // ← incrémente ?v=2, ?v=3…
+  const TABLE_SESSIONS = 'SESSIONS';
+  const TABLE_MODULES  = 'MODULES';
 
-    document.getElementById('btn').addEventListener('click', () =>
-      alert('Le widget fonctionne, l’API est bien chargée !'));
-  </script>
+  /* ------------------------------------------------------------------ *
+   * 1.  ACCÈS À L'API GRIST                                            *
+   * ------------------------------------------------------------------ */
+  const grist = window.grist;
+  if (!grist) { console.error('API Grist non trouvée'); return; }
+  grist.ready();
+
+  /* ------------------------------------------------------------------ *
+   * 2.  PRÉ-CHARGEMENT DU MODÈLE DOCX                                  *
+   * ------------------------------------------------------------------ */
+  let templateBuf;
+  try {
+    const res = await fetch(TEMPLATE_URL);
+    templateBuf = await res.arrayBuffer();
+    console.log('[WIDGET] Modèle chargé');
+  } catch (e) {
+    alert('Impossible de charger le modèle DOCX : ' + e);
+    return;
+  }
+
+  /* ------------------------------------------------------------------ *
+   * 3.  CHARGEMENT DES TABLES                                          *
+   * ------------------------------------------------------------------ */
+  const {records: sessionRows} = await grist.docApi.fetchTable(TABLE_SESSIONS);
+  const {records: moduleRows } = await grist.docApi.fetchTable(TABLE_MODULES);
+
+  // Dictionnaire id → libellé du module (colonne RefModule dans MODULES)
+  const moduleLabelById = Object.fromEntries(
+    moduleRows.map(r => [r.id, sanitize(r.RefModule)])
+  );
+
+  /* ------------------------------------------------------------------ *
+   * 4.  UTILITAIRES                                                    *
+   * ------------------------------------------------------------------ */
+  function sanitize(v) {
+    if (Array.isArray(v) && v[0]?.attachmentId) return v.map(a => a.name).join(', ');
+    if (v && typeof v === 'object') return JSON.stringify(v);
+    return v ?? '';
+  }
+
+  // Récupère toutes les sessions d’un même module_pilote
+  const sessionsByModule = {};
+  for (const s of sessionRows) {
+    const key = s.RefModule_id_module_pilote;
+    (sessionsByModule[key] ??= []).push(s);
+  }
+
+  /* ------------------------------------------------------------------ *
+   * 5.  SUIVI DE LA SÉLECTION                                          *
+   * ------------------------------------------------------------------ */
+  let currentRec = null;
+  grist.onRecord(rec => {
+    currentRec = rec;                       // null si aucune ligne sélectionnée
+    document.getElementById('btn').disabled = !rec;
+  });
+
+  /* ------------------------------------------------------------------ *
+   * 6.  GÉNÉRATION AU CLIC                                             *
+   * ------------------------------------------------------------------ */
+  document.getElementById('btn').addEventListener('click', () => {
+    if (!currentRec) return alert('Sélectionne d\'abord une ligne de SESSIONS.');
+
+    const modId   = currentRec.RefModule_id_module_pilote;
+    const sessions= sessionsByModule[modId] || [];
+
+    const data = {
+      ID_MODULE: modId,
+      CODE_MODULE: moduleLabelById[currentRec.RefModule] || currentRec.RefModule,
+      LIBELLE_MODULE: sanitize(currentRec['RefModule_libelle dispositif']),
+      AXE_SDFC:       sanitize(currentRec['RefModule_axe sdfc']),
+      OBJECTIF_DISPOSITIF: sanitize(currentRec['RefModule_objectif dispositif']),
+      OBJECTIF_MODULE:     sanitize(currentRec['RefModule_objectif module / description contenu']),
+      sessions: sessions.map(s => ({
+        IndexSession:   sanitize(s['index session']),
+        Periode:        sanitize(s.periode),
+        Modalite:       sanitize(s.modalite),
+        ObjectifSession:sanitize(s['objectif session']),
+        Formateurs:     sanitize(s.formateurs),
+        NbGroupes:      sanitize(s['nombre de groupes']),
+        Effectif:       sanitize(s['effectif groupe']),
+        Duree:          sanitize(s.duree),
+        VolumeHoraire:  sanitize(s['volume horaire'])
+      }))
+    };
+
+    try {
+      const zip = new PizZip(templateBuf);
+      const doc = new window.Docxtemplater(zip, {paragraphLoop:true, linebreaks:true});
+      doc.setData(data);
+      doc.render();
+      const blob = doc.getZip().generate({
+        type:'blob',
+        mimeType:'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+      });
+      const filename = `Module_${data.CODE_MODULE || data.ID_MODULE}.docx`;
+      saveAs(blob, filename);
+      console.log('[WIDGET] DOCX généré et téléchargé :', filename);
+    } catch (e) {
+      console.error(e);
+      alert('Erreur pendant la génération : ' + e.message);
+    }
+  });
+
+});
+</script>
 </body>
 </html>
